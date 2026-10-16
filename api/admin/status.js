@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '../../lib/server-client.mjs';
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = createServerClient();
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
@@ -15,20 +15,22 @@ export default async function handler(req, res) {
   // GET: 查詢目前營業狀態
   if (req.method === 'GET') {
     try {
-      const { data } = await supabase.from('system_settings').select('status').eq('id', 1).single();
-      return res.status(200).json({ status: data?.status || 'open' });
+      const { data, error } = await supabase.from('system_settings').select('status').eq('id', 1).single();
+      if (error || !data || !['open', 'stop', 'closed'].includes(data.status)) throw new Error('Status unavailable');
+      return res.status(200).json({ status: data.status });
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: '服務暫時無法使用' });
     }
   }
 
   // POST: 管理員切換營業狀態
   if (req.method === 'POST') {
-    const { status, adminPassword } = req.body;
+    const { status, adminPassword } = req.body || {};
     
-    // 檢查管理員密碼 (預設為 1234，可由環境變數 ADMIN_PASSWORD 蓋過)
-    const expectedPassword = process.env.ADMIN_PASSWORD || '1234';
-    if (adminPassword !== expectedPassword) {
+    // 管理員密碼必須由環境變數設定。
+    const expectedPassword = process.env.ADMIN_PASSWORD;
+    if (!expectedPassword) return res.status(503).json({ error: '管理功能尚未設定' });
+    if (typeof adminPassword !== 'string' || adminPassword !== expectedPassword) {
       return res.status(401).json({ error: '管理員密碼錯誤' });
     }
 
@@ -46,7 +48,7 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true, status });
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: '服務暫時無法使用' });
     }
   }
 
