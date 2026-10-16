@@ -550,10 +550,12 @@
                 const getMenuItem = (id) => menu.value.find(i => i.id == id);
 
                 const updateCart = (id, d) => { const n = Math.max(0, (cart.value[id] || 0) + d); n === 0 ? delete cart.value[id] : cart.value[id] = n; };
-                const resetForm = () => { cart.value = {}; step.value = 1; form.value.remark = ''; };
+                const resetForm = () => { pendingSubmission = null; cart.value = {}; step.value = 1; form.value.remark = ''; };
                 const closeLiff = () => liff.isInClient() ? liff.closeWindow() : alert('請直接關閉視窗');
 
+                let pendingSubmission = null;
                 const submitOrder = async () => {
+                    if (isLoading.value || step.value !== 2) return;
                     if (!form.value.unit || !form.value.phone || !form.value.address || !form.value.time) return alert('請填寫所有必填欄位 (*) 喔！');
                     
                     isLoading.value = true;
@@ -573,6 +575,12 @@
                         status: 'pending'
                     };
 
+                    const submissionBody = { ...form.value, name: payload.customer_name || '訪客', items: payload.items, totalPrice: payload.total_price };
+                    const signature = JSON.stringify(submissionBody);
+                    if (!pendingSubmission || pendingSubmission.signature !== signature) {
+                        pendingSubmission = { signature, id: crypto.randomUUID() };
+                    }
+                    submissionBody.requestId = pendingSubmission.id;
                     let retries = 3;
                     let isSuccess = false;
                     let baseLoadingText = isLoggingIn.value ? '正在確認身分並傳送...' : '正在為您處理訂單...';
@@ -584,16 +592,12 @@
                             const response = await fetch(CONFIG.API_URL, { 
                                 method: 'POST', 
                                 headers: { 'Content-Type': 'application/json' }, 
-                                body: JSON.stringify({
-                                    ...form.value,
-                                    name: payload.customer_name || '訪客',
-                                    items: payload.items,
-                                    totalPrice: payload.total_price
-                                }) 
+                                body: JSON.stringify(submissionBody) 
                             });
                             const result = await response.json();
                             if (result.status === "success") {
                                 isSuccess = true;
+                                pendingSubmission = null;
                                 if (result.joke && result.joke.trim() !== "") dailyJoke.value = result.joke;
                             } else {
                                 throw new Error(result.message || "系統回報異常");
