@@ -19,7 +19,7 @@ ALTER TABLE public.order_notifications ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.order_requests,public.order_daily_sequences,public.order_notifications FROM anon,authenticated;
 GRANT ALL ON public.order_requests,public.order_daily_sequences,public.order_notifications TO service_role;
 CREATE OR REPLACE FUNCTION public.place_order_v2(p_request_id text,p_fingerprint text,p_order jsonb)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
 DECLARE
  previous public.order_requests%ROWTYPE;
  business_date date := (now() AT TIME ZONE 'Asia/Taipei')::date;
@@ -54,4 +54,13 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.place_order_v2(text,text,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.place_order_v2(text,text,jsonb) TO service_role;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jokes ENABLE ROW LEVEL SECURITY;
+-- The browser only queries status for id=1. Order and joke access is server-side.
+REVOKE ALL ON public.orders,public.jokes,public.system_settings FROM anon,authenticated;
+GRANT SELECT(id,status) ON public.system_settings TO anon,authenticated;
+CREATE POLICY customer_read_store_status ON public.system_settings
+ FOR SELECT TO anon,authenticated USING (id=1);
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.orders,public.system_settings,public.jokes TO service_role;
 COMMIT;

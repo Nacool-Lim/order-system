@@ -1,28 +1,32 @@
-# Internal reliability fixes (not deployed)
+# Order integrity release
 
-Original GitHub revision: d2afb3bbcd6deb7bd1071aa58c2cfbbb9245403d.
-The archive in /workspace/backups contains the exact original application source.
-Images are unchanged on GitHub. This archive is a source backup, not a database backup or a complete repository clone.
+Customer HTML/CSS, admin.html and ordering steps are unchanged. index.html adds only a request ID and duplicate-click protection.
 
-## Required rollout order
-1. Back up the production Supabase database and inspect orders/system_settings schema, constraints, triggers and RLS. Confirm items_json accepts JSON and delivery_time accepts HH:MM. The supplied SQL has NOT been tested against production PostgreSQL.
-2. Rotate the exposed Pushover application token and user key via Pushover; update the existing Vercel production deployment environment first. Never put secret values in GitHub or chat. Configure PUSHOVER_API_TOKEN, PUSHOVER_USER_KEY, and a strong ADMIN_PASSWORD. Existing SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY remain server-only. Do not deploy without these variables.
-3. Apply supabase/migrations/202610160001_order_integrity.sql using the database migration workflow, after schema verification. New internal tables have RLS enabled and no customer permissions. Existing RLS is not modified without inspection.
-4. Deploy a Vercel preview and test against a separate Supabase project, with a test Pushover destination. Verify simultaneous submissions and retry behavior with actual PostgreSQL transactions. Backend imports include lib/*.mjs and require a runtime supporting AbortSignal.timeout.
-5. Promote only after these checks. Customer page HTML/CSS and ordering steps are unchanged. Verify in LINE LIFF and mobile browsers, including crypto.randomUUID support.
+## Included
+- Server-side menu, quantity, contact-field and time validation; server-calculated totals.
+- Transactional request receipts and Asia/Taipei daily numbering, seeded from existing daily IDs.
+- Restricted SECURITY INVOKER RPC available only to service_role.
+- RLS on all six application tables. Browser roles may only select id/status for system_settings id=1; orders, jokes and internal receipts/notifications are server-only.
+- Notifications are claimed once, checked for HTTP/API success, and recorded as pending/sending/sent/failed. A notification failure never turns a committed order into a failed order.
+- No hardcoded Pushover or admin credentials; all secrets come from Vercel environment variables.
+- Supabase SDK pinned to 2.48.0 with package-lock.json.
 
-## Behavior and limitations
-- Menu validation is server-side in lib/order-core.mjs. Keep this catalogue in sync with the frontend when prices change. Special custom items retain the existing zero-price behavior.
-- New frontend requests share an ID across automatic retries and manual retries on the same page; a new deliberate order gets a new ID. Old cached clients get a best-effort one-minute fingerprint fallback. This fallback cannot guarantee deduplication across minute boundaries and may merge intentional identical submissions in that window; refresh old clients during rollout.
-- Idempotency key mappings and daily sequence changes are committed atomically with the order. Sequence dates use Asia/Taipei. Existing same-day order IDs seed the sequence.
-- Committed orders return success even if Pushover or optional joke loading fails. Notifications are claimed once and logged as pending/sending/sent/failed in order_notifications. Monitor pending, failed and stale sending rows. Automatic push redelivery is deliberately not enabled: a network timeout can mean Pushover received a message but its acknowledgement was lost. A reviewed manual retry process is still needed.
-- Frontend history and customer information remain local to the browser. No visual or interaction redesign.
-- Store-status read errors in the admin API return an error; new order acceptance checks status transactionally and refuses on missing/unavailable status.
-- There is no production DB backup, credential rotation, database migration or Vercel deployment performed by the local code edits.
+## Required configuration
+Production: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PUSHOVER_API_TOKEN, PUSHOVER_USER_KEY, ADMIN_PASSWORD. The database credential must be a real server-side service-role key, not the browser anon key. Never expose server secrets to the browser.
+
+## Verification
+Six offline handler tests passed. Isolated PostgreSQL 17 restored the three production application tables, verified migration compatibility, and tested 48 concurrent submissions: 24 identical requests created one order, plus 24 independent requests created 24 additional orders. Verified RLS and server-only RPC access. Windows local UI simulation was approved by the user.
+
+Before the database update, complete repository history/images and private snapshots of public.orders/system_settings/jokes plus schema/grants were saved in the execution workspace outside this repository. These are application backups, not a full Supabase platform backup.
+
+## Rollout
+Apply the additive database migration, verify roles and counts, then merge the reviewed commit and verify the resulting Vercel production deployment. Existing backend operations use service_role and remain compatible with RLS. Do not deploy the local test package to production.
+
+## Remaining operational items
+- Pushover credentials previously exposed in git history must be rotated through Pushover and replaced directly in Vercel. Rotation is not confirmed; retaining configured values preserves existing routing but does not revoke exposed credentials.
+- Monitor order_notifications for pending, failed or stale sending rows. Automatic retry is not enabled because a timeout may mean Pushover received a message without acknowledgement. Manual review is required before retrying.
+- Old cached clients lack request IDs; the one-minute fingerprint fallback offers best-effort deduplication only. It can merge identical intentional submissions within a minute and cannot deduplicate across minute boundaries. New clients reuse a request ID for retries on the same page; refreshing the page loses that in-memory ID.
+- Frontend history and customer information remain browser-local. LINE login and real push delivery require separate live validation; automated checks do not create real orders or send push messages.
 
 ## Rollback
-Redeploy the previous Vercel deployment with valid environment variables. The migration is additive; keep the extra columns/tables to retain new receipts and notification records. Never reset sequences or delete receipt rows while the new handler is active.
-
-## Checks
-Run: node --test test/orders.test.mjs
-Tests use fake integrations and do not send notifications or write real orders. PostgreSQL concurrency, RLS and Vercel deployment checks require connected staging services.
+Use the preceding Vercel production deployment. Keep the additive schema/receipts and RLS; the original service-role backend remains compatible. Do not reset counters or remove receipts while any new handler is active. Keep server-side menu prices synchronized with the frontend when modifying the menu.
